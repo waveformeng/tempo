@@ -14,28 +14,40 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // MongoDB Connection
 let db;
+let client;
 const mongoUri = process.env.MONGODB_URI;
 
 async function connectDB() {
+  if (db) return db;
+
   try {
-    const client = new MongoClient(mongoUri);
+    client = new MongoClient(mongoUri);
     await client.connect();
     db = client.db('timetracker');
-    console.log('✅ Connected to MongoDB Atlas');
-    
+    console.log('Connected to MongoDB Atlas');
+
     // Create indexes for better query performance
     await db.collection('clients').createIndex({ name: 1 });
     await db.collection('jobs').createIndex({ clientId: 1 });
     await db.collection('timeEntries').createIndex({ clientId: 1, jobId: 1 });
     await db.collection('timeEntries').createIndex({ date: -1 });
+
+    return db;
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error.message);
-    console.log('\n📝 Make sure to:');
-    console.log('   1. Copy .env.example to .env');
-    console.log('   2. Update MONGODB_URI with your Atlas connection string\n');
-    process.exit(1);
+    console.error('MongoDB connection error:', error.message);
+    throw error;
   }
 }
+
+// Middleware to ensure DB connection for each request (serverless-friendly)
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    res.status(500).json({ error: 'Database connection failed' });
+  }
+});
 
 // ============== CLIENT ROUTES ==============
 
@@ -344,9 +356,14 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// Start server
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running at http://localhost:${PORT}`);
+// Start server (for local development)
+if (process.env.NODE_ENV !== 'production') {
+  connectDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
   });
-});
+}
+
+// Export for Vercel serverless
+module.exports = app;

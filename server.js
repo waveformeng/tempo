@@ -100,13 +100,17 @@ app.get('/api/clients', async (req, res) => {
 // Create client
 app.post('/api/clients', async (req, res) => {
   try {
-    const { name, rate } = req.body;
+    const { name, rate, street, city, state, zip } = req.body;
     if (!name || rate === undefined) {
       return res.status(400).json({ error: 'Name and rate are required' });
     }
     const result = await db.collection('clients').insertOne({
       name,
       rate: parseFloat(rate),
+      street: street || '',
+      city: city || '',
+      state: state || '',
+      zip: zip || '',
       createdAt: new Date()
     });
     const newClient = await db.collection('clients').findOne({ _id: result.insertedId });
@@ -119,10 +123,18 @@ app.post('/api/clients', async (req, res) => {
 // Update client
 app.put('/api/clients/:id', async (req, res) => {
   try {
-    const { name, rate } = req.body;
+    const { name, rate, street, city, state, zip } = req.body;
     const result = await db.collection('clients').findOneAndUpdate(
       { _id: new ObjectId(req.params.id) },
-      { $set: { name, rate: parseFloat(rate), updatedAt: new Date() } },
+      { $set: {
+        name,
+        rate: parseFloat(rate),
+        street: street || '',
+        city: city || '',
+        state: state || '',
+        zip: zip || '',
+        updatedAt: new Date()
+      } },
       { returnDocument: 'after' }
     );
     if (!result) {
@@ -164,13 +176,16 @@ app.get('/api/jobs', async (req, res) => {
 // Create job
 app.post('/api/jobs', async (req, res) => {
   try {
-    const { name, clientId } = req.body;
+    const { name, clientId, jobNumber, contactName, contactEmail } = req.body;
     if (!name || !clientId) {
       return res.status(400).json({ error: 'Name and clientId are required' });
     }
     const result = await db.collection('jobs').insertOne({
       name,
       clientId,
+      jobNumber: jobNumber || '',
+      contactName: contactName || '',
+      contactEmail: contactEmail || '',
       createdAt: new Date()
     });
     const newJob = await db.collection('jobs').findOne({ _id: result.insertedId });
@@ -183,10 +198,20 @@ app.post('/api/jobs', async (req, res) => {
 // Update job
 app.put('/api/jobs/:id', async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, jobNumber, contactName, contactEmail } = req.body;
+    const updateFields = { name, updatedAt: new Date() };
+    if (jobNumber !== undefined) {
+      updateFields.jobNumber = jobNumber;
+    }
+    if (contactName !== undefined) {
+      updateFields.contactName = contactName;
+    }
+    if (contactEmail !== undefined) {
+      updateFields.contactEmail = contactEmail;
+    }
     const result = await db.collection('jobs').findOneAndUpdate(
       { _id: new ObjectId(req.params.id) },
-      { $set: { name, updatedAt: new Date() } },
+      { $set: updateFields },
       { returnDocument: 'after' }
     );
     if (!result) {
@@ -521,9 +546,16 @@ app.post('/api/invoices', async (req, res) => {
       invoiceNumber,
       clientId,
       clientName: client.name,
+      clientStreet: client.street || '',
+      clientCity: client.city || '',
+      clientState: client.state || '',
+      clientZip: client.zip || '',
       clientRate: client.rate,
       jobId,
       jobName: job.name,
+      jobNumber: job.jobNumber || '',
+      contactName: job.contactName || '',
+      contactEmail: job.contactEmail || '',
       startDate: start,
       endDate: end,
       status: 'unpaid',
@@ -764,10 +796,14 @@ app.get('/api/invoices/:id/html', async (req, res) => {
     <div class="detail-section">
       <h3>Bill To</h3>
       <p>${invoice.clientName}</p>
+      ${invoice.clientStreet ? `<p class="sub">${invoice.clientStreet}</p>` : ''}
+      ${(invoice.clientCity || invoice.clientState || invoice.clientZip) ? `<p class="sub">${[invoice.clientCity, invoice.clientState].filter(Boolean).join(', ')}${invoice.clientZip ? ' ' + invoice.clientZip : ''}</p>` : ''}
     </div>
     <div class="detail-section">
       <h3>Job / Purchase Order</h3>
-      <p>${invoice.jobName}</p>
+      <p>${invoice.jobName}${invoice.jobNumber ? ` <span class="sub">(${invoice.jobNumber})</span>` : ''}</p>
+      ${invoice.contactName ? `<p class="sub">Contact: ${invoice.contactName}</p>` : ''}
+      ${invoice.contactEmail ? `<p class="sub">${invoice.contactEmail}</p>` : ''}
       <p class="sub">Period: ${formatDate(invoice.startDate)} - ${formatDate(invoice.endDate)}</p>
       <p class="sub">Rate: ${formatCurrency(invoice.clientRate)}/hour</p>
     </div>

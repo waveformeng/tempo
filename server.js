@@ -10,6 +10,31 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Basic Authentication
+const AUTH_USER = process.env.AUTH_USER || 'time';
+const AUTH_PASS = process.env.AUTH_PASS || 'tracking';
+
+app.use((req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Time Tracker"');
+    return res.status(401).send('Authentication required');
+  }
+
+  const base64Credentials = authHeader.split(' ')[1];
+  const credentials = Buffer.from(base64Credentials, 'base64').toString('utf8');
+  const [user, pass] = credentials.split(':');
+
+  if (user === AUTH_USER && pass === AUTH_PASS) {
+    next();
+  } else {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Time Tracker"');
+    return res.status(401).send('Invalid credentials');
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // MongoDB Connection

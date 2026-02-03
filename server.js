@@ -12,10 +12,15 @@ app.use(cors());
 app.use(express.json());
 
 // Basic Authentication
-const AUTH_USER = process.env.AUTH_USER || 'time';
-const AUTH_PASS = process.env.AUTH_PASS || 'tracking';
+const AUTH_USER = process.env.AUTH_USER;
+const AUTH_PASS = process.env.AUTH_PASS;
 
 app.use((req, res, next) => {
+  // Skip auth if credentials not configured (local development)
+  if (!AUTH_USER || !AUTH_PASS) {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Basic ')) {

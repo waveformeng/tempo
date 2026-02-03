@@ -780,6 +780,13 @@
           </svg>
           Invoices
         </button>
+        <button class="nav-item" onclick="showModal('company')" style="margin-top: auto;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          Company Settings
+        </button>
       </nav>
     </aside>
 
@@ -1184,6 +1191,65 @@
     </div>
   </div>
 
+  <!-- Company Settings Modal -->
+  <div class="modal-overlay" id="company-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Company Settings</h2>
+        <button class="modal-close" onclick="closeModal('company')">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <form id="company-form" onsubmit="saveCompany(event)">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label for="company-name">Company Name</label>
+            <input type="text" id="company-name" placeholder="Your Company Name">
+          </div>
+          <div class="form-group">
+            <label for="company-contact-name">Contact Name</label>
+            <input type="text" id="company-contact-name" placeholder="John Smith">
+          </div>
+          <div class="form-group">
+            <label for="company-contact-email">Contact Email</label>
+            <input type="email" id="company-contact-email" placeholder="john@company.com">
+          </div>
+          <div class="form-group">
+            <label for="company-contact-phone">Phone Number</label>
+            <input type="tel" id="company-contact-phone" placeholder="(555) 123-4567">
+          </div>
+          <div class="form-group">
+            <label for="company-website">Website</label>
+            <input type="text" id="company-website" placeholder="www.company.com">
+          </div>
+          <div class="form-group full">
+            <label for="company-street">Street Address</label>
+            <input type="text" id="company-street" placeholder="123 Main St">
+          </div>
+          <div class="form-group">
+            <label for="company-city">City</label>
+            <input type="text" id="company-city" placeholder="San Francisco">
+          </div>
+          <div class="form-group">
+            <label for="company-state">State</label>
+            <input type="text" id="company-state" placeholder="CA" maxlength="2" style="text-transform: uppercase;">
+          </div>
+          <div class="form-group">
+            <label for="company-zip">Zip Code</label>
+            <input type="text" id="company-zip" placeholder="94102">
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('company')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Company</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const API = '';
 
@@ -1192,6 +1258,7 @@
     let jobs = [];
     let timeEntries = [];
     let invoices = [];
+    let company = {};
     let stats = {};
     let invoiceStatusFilter = 'all';
 
@@ -1225,12 +1292,13 @@
         if (reportFilters.endDate) params.append('endDate', reportFilters.endDate);
         if (params.toString()) statsUrl += `?${params.toString()}`;
 
-        const [clientsRes, jobsRes, entriesRes, statsRes, invoicesRes] = await Promise.all([
+        const [clientsRes, jobsRes, entriesRes, statsRes, invoicesRes, companyRes] = await Promise.all([
           fetch(`${API}/api/clients`),
           fetch(`${API}/api/jobs`),
           fetch(`${API}/api/time-entries`),
           fetch(statsUrl),
-          fetch(`${API}/api/invoices`)
+          fetch(`${API}/api/invoices`),
+          fetch(`${API}/api/company`)
         ]);
 
         clients = await clientsRes.json();
@@ -1238,6 +1306,7 @@
         timeEntries = await entriesRes.json();
         stats = await statsRes.json();
         invoices = await invoicesRes.json();
+        company = await companyRes.json();
 
         renderAll();
       } catch (error) {
@@ -1687,6 +1756,19 @@
         document.getElementById('invoice-start').value = firstDay.toISOString().split('T')[0];
         document.getElementById('invoice-end').value = today.toISOString().split('T')[0];
       }
+
+      if (type === 'company') {
+        // Populate company fields with current data
+        document.getElementById('company-name').value = company.name || '';
+        document.getElementById('company-contact-name').value = company.contactName || '';
+        document.getElementById('company-contact-email').value = company.contactEmail || '';
+        document.getElementById('company-contact-phone').value = company.contactPhone || '';
+        document.getElementById('company-website').value = company.website || '';
+        document.getElementById('company-street').value = company.street || '';
+        document.getElementById('company-city').value = company.city || '';
+        document.getElementById('company-state').value = company.state || '';
+        document.getElementById('company-zip').value = company.zip || '';
+      }
     }
 
     function closeModal(type) {
@@ -1723,6 +1805,31 @@
       const clientJobs = jobs.filter(j => j.clientId === clientId);
       jobSelect.innerHTML = `<option value="">Select a job...</option>` + 
         clientJobs.map(j => `<option value="${j._id}">${j.name}</option>`).join('');
+    }
+
+    // Company Settings
+    async function saveCompany(e) {
+      e.preventDefault();
+      const data = {
+        name: document.getElementById('company-name').value,
+        contactName: document.getElementById('company-contact-name').value,
+        contactEmail: document.getElementById('company-contact-email').value,
+        contactPhone: document.getElementById('company-contact-phone').value,
+        website: document.getElementById('company-website').value,
+        street: document.getElementById('company-street').value,
+        city: document.getElementById('company-city').value,
+        state: document.getElementById('company-state').value.toUpperCase(),
+        zip: document.getElementById('company-zip').value
+      };
+
+      await fetch(`${API}/api/company`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+
+      closeModal('company');
+      fetchData();
     }
 
     // Client CRUD

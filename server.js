@@ -85,6 +85,60 @@ app.use(async (req, res, next) => {
   }
 });
 
+// ============== COMPANY ROUTES ==============
+
+// Get company info (singleton)
+app.get('/api/company', async (req, res) => {
+  try {
+    let company = await db.collection('company').findOne({});
+    if (!company) {
+      // Return empty company structure if none exists
+      company = {
+        name: '',
+        contactName: '',
+        contactEmail: '',
+        contactPhone: '',
+        street: '',
+        city: '',
+        state: '',
+        zip: '',
+        website: ''
+      };
+    }
+    res.json(company);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update company info (upsert)
+app.put('/api/company', async (req, res) => {
+  try {
+    const { name, contactName, contactEmail, contactPhone, street, city, state, zip, website } = req.body;
+    const companyData = {
+      name: name || '',
+      contactName: contactName || '',
+      contactEmail: contactEmail || '',
+      contactPhone: contactPhone || '',
+      street: street || '',
+      city: city || '',
+      state: state || '',
+      zip: zip || '',
+      website: website || '',
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection('company').findOneAndUpdate(
+      {},
+      { $set: companyData },
+      { upsert: true, returnDocument: 'after' }
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============== CLIENT ROUTES ==============
 
 // Get all clients
@@ -512,6 +566,9 @@ app.post('/api/invoices', async (req, res) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
+    // Get company info
+    const company = await db.collection('company').findOne({}) || {};
+
     // Get time entries for this job within the date range
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -544,6 +601,17 @@ app.post('/api/invoices', async (req, res) => {
 
     const invoice = {
       invoiceNumber,
+      // Company (from) info
+      companyName: company.name || '',
+      companyContactName: company.contactName || '',
+      companyContactEmail: company.contactEmail || '',
+      companyContactPhone: company.contactPhone || '',
+      companyStreet: company.street || '',
+      companyCity: company.city || '',
+      companyState: company.state || '',
+      companyZip: company.zip || '',
+      companyWebsite: company.website || '',
+      // Client (bill to) info
       clientId,
       clientName: client.name,
       clientStreet: client.street || '',
@@ -551,11 +619,13 @@ app.post('/api/invoices', async (req, res) => {
       clientState: client.state || '',
       clientZip: client.zip || '',
       clientRate: client.rate,
+      // Job info
       jobId,
       jobName: job.name,
       jobNumber: job.jobNumber || '',
       contactName: job.contactName || '',
       contactEmail: job.contactEmail || '',
+      // Invoice details
       startDate: start,
       endDate: end,
       status: 'unpaid',
@@ -675,10 +745,20 @@ app.get('/api/invoices/:id/html', async (req, res) => {
       padding-bottom: 20px;
       border-bottom: 2px solid #f97316;
     }
+    .company-info {
+      max-width: 300px;
+    }
+    .company-info .sub {
+      font-size: 13px;
+      color: #666;
+      margin-top: 2px;
+    }
     .logo {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: 700;
+      line-height: 32px;
       color: #1a1a1a;
+      margin-bottom: 16px;
     }
     .logo span { color: #f97316; }
     .invoice-info {
@@ -784,7 +864,15 @@ app.get('/api/invoices/:id/html', async (req, res) => {
 </head>
 <body>
   <div class="header">
-    <div class="logo">Temp<span>o</span></div>
+    <div class="company-info">
+      <div class="logo">${invoice.companyName || '<span>Generic Company</span>'}</div>
+      ${invoice.companyContactName ? `<p class="sub">${invoice.companyContactName}</p>` : ''}
+      ${invoice.companyStreet ? `<p class="sub">${invoice.companyStreet}</p>` : ''}
+      ${(invoice.companyCity || invoice.companyState || invoice.companyZip) ? `<p class="sub">${[invoice.companyCity, invoice.companyState].filter(Boolean).join(', ')}${invoice.companyZip ? ' ' + invoice.companyZip : ''}</p>` : ''}
+      ${invoice.companyContactPhone ? `<p class="sub">${invoice.companyContactPhone}</p>` : ''}
+      ${invoice.companyContactEmail ? `<p class="sub">${invoice.companyContactEmail}</p>` : ''}
+      ${invoice.companyWebsite ? `<p class="sub">${invoice.companyWebsite}</p>` : ''}
+    </div>
     <div class="invoice-info">
       <div class="invoice-number">${invoice.invoiceNumber}</div>
       <div class="invoice-date">Issued: ${formatDate(invoice.createdAt)}</div>
@@ -801,8 +889,8 @@ app.get('/api/invoices/:id/html', async (req, res) => {
     </div>
     <div class="detail-section">
       <h3>Job / Purchase Order</h3>
-      <p>${invoice.jobName}${invoice.jobNumber ? ` <span class="sub">(${invoice.jobNumber})</span>` : ''}</p>
-      ${invoice.contactName ? `<p class="sub">Contact: ${invoice.contactName}</p>` : ''}
+      <p>${invoice.jobName}${invoice.jobNumber ? ` <span class="sub"><b>${invoice.jobNumber}</b></span>` : ''}</p>
+      ${invoice.contactName ? `<p class="sub">Attn: ${invoice.contactName}</p>` : ''}
       ${invoice.contactEmail ? `<p class="sub">${invoice.contactEmail}</p>` : ''}
       <p class="sub">Period: ${formatDate(invoice.startDate)} - ${formatDate(invoice.endDate)}</p>
       <p class="sub">Rate: ${formatCurrency(invoice.clientRate)}/hour</p>

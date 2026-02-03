@@ -770,6 +770,16 @@
           </svg>
           Jobs
         </button>
+        <button class="nav-item" data-view="invoices">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Invoices
+        </button>
       </nav>
     </aside>
 
@@ -919,6 +929,46 @@
           </table>
         </div>
       </div>
+
+      <!-- Invoices View -->
+      <div id="invoices" class="view">
+        <header class="page-header">
+          <h1 class="page-title">Invoices</h1>
+          <button class="btn btn-primary" onclick="showModal('invoice')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Create Invoice
+          </button>
+        </header>
+
+        <div class="filter-bar">
+          <span class="filter-label">Status:</span>
+          <div class="filter-group">
+            <button class="filter-btn active" data-invoice-status="all" onclick="filterInvoices('all')">All</button>
+            <button class="filter-btn" data-invoice-status="unpaid" onclick="filterInvoices('unpaid')">Unpaid</button>
+            <button class="filter-btn" data-invoice-status="paid" onclick="filterInvoices('paid')">Paid</button>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Client</th>
+                <th>Job / PO</th>
+                <th>Period</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="invoices-table"></tbody>
+          </table>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -1030,6 +1080,45 @@
     </div>
   </div>
 
+  <!-- Invoice Modal -->
+  <div class="modal-overlay" id="invoice-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="invoice-modal-title">Create Invoice</h2>
+        <button class="modal-close" onclick="closeModal('invoice')">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <form id="invoice-form" onsubmit="createInvoice(event)">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="invoice-client">Client</label>
+            <select id="invoice-client" required onchange="loadJobsForInvoice()"></select>
+          </div>
+          <div class="form-group">
+            <label for="invoice-job">Job / PO</label>
+            <select id="invoice-job" required></select>
+          </div>
+          <div class="form-group">
+            <label for="invoice-start">Start Date</label>
+            <input type="date" id="invoice-start" required>
+          </div>
+          <div class="form-group">
+            <label for="invoice-end">End Date</label>
+            <input type="date" id="invoice-end" required>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('invoice')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Invoice</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const API = '';
 
@@ -1037,7 +1126,9 @@
     let clients = [];
     let jobs = [];
     let timeEntries = [];
+    let invoices = [];
     let stats = {};
+    let invoiceStatusFilter = 'all';
 
     // Report state
     let reportFilters = {
@@ -1069,17 +1160,19 @@
         if (reportFilters.endDate) params.append('endDate', reportFilters.endDate);
         if (params.toString()) statsUrl += `?${params.toString()}`;
 
-        const [clientsRes, jobsRes, entriesRes, statsRes] = await Promise.all([
+        const [clientsRes, jobsRes, entriesRes, statsRes, invoicesRes] = await Promise.all([
           fetch(`${API}/api/clients`),
           fetch(`${API}/api/jobs`),
           fetch(`${API}/api/time-entries`),
-          fetch(statsUrl)
+          fetch(statsUrl),
+          fetch(`${API}/api/invoices`)
         ]);
 
         clients = await clientsRes.json();
         jobs = await jobsRes.json();
         timeEntries = await entriesRes.json();
         stats = await statsRes.json();
+        invoices = await invoicesRes.json();
 
         renderAll();
       } catch (error) {
@@ -1093,6 +1186,7 @@
       renderJobs();
       renderTimeEntries();
       renderClientBreakdown();
+      renderInvoices();
     }
 
     function renderStats() {
@@ -1499,27 +1593,50 @@
     // Modal Functions
     function showModal(type) {
       document.getElementById(`${type}-modal`).classList.add('active');
-      
+
       if (type === 'job' || type === 'time') {
         populateClientSelect(type);
       }
-      
+
       if (type === 'time') {
         document.getElementById('time-date').value = new Date().toISOString().split('T')[0];
+      }
+
+      if (type === 'invoice') {
+        populateClientSelect('invoice');
+        // Default to first day of current month to today
+        const today = new Date();
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+        document.getElementById('invoice-start').value = firstDay.toISOString().split('T')[0];
+        document.getElementById('invoice-end').value = today.toISOString().split('T')[0];
       }
     }
 
     function closeModal(type) {
       document.getElementById(`${type}-modal`).classList.remove('active');
       document.getElementById(`${type}-form`).reset();
-      document.getElementById(`${type}-id`).value = '';
-      document.getElementById(`${type}-modal-title`).textContent = type === 'time' ? 'Log Time' : `Add ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+      if (document.getElementById(`${type}-id`)) {
+        document.getElementById(`${type}-id`).value = '';
+      }
+      const titleMap = {
+        'time': 'Log Time',
+        'client': 'Add Client',
+        'job': 'Add Job',
+        'invoice': 'Create Invoice'
+      };
+      document.getElementById(`${type}-modal-title`).textContent = titleMap[type] || `Add ${type.charAt(0).toUpperCase() + type.slice(1)}`;
     }
 
     function populateClientSelect(type) {
       const select = document.getElementById(`${type}-client`);
-      select.innerHTML = `<option value="">Select a client...</option>` + 
+      select.innerHTML = `<option value="">Select a client...</option>` +
         clients.map(c => `<option value="${c._id}">${c.name}</option>`).join('');
+
+      // Clear dependent job select if it exists
+      const jobSelect = document.getElementById(`${type}-job`);
+      if (jobSelect) {
+        jobSelect.innerHTML = `<option value="">Select a job...</option>`;
+      }
     }
 
     function loadJobsForClient() {
@@ -1658,6 +1775,145 @@
     async function deleteTimeEntry(id) {
       if (!confirm('Delete this time entry?')) return;
       await fetch(`${API}/api/time-entries/${id}`, { method: 'DELETE' });
+      fetchData();
+    }
+
+    // Invoice Functions
+    function renderInvoices() {
+      const tbody = document.getElementById('invoices-table');
+
+      // Filter invoices by status
+      let filteredInvoices = invoices;
+      if (invoiceStatusFilter !== 'all') {
+        filteredInvoices = invoices.filter(inv => inv.status === invoiceStatusFilter);
+      }
+
+      if (filteredInvoices.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty-state">
+              <p>${invoiceStatusFilter === 'all' ? 'No invoices yet. Create your first invoice!' : `No ${invoiceStatusFilter} invoices.`}</p>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = filteredInvoices.map(invoice => {
+        const startDate = new Date(invoice.startDate).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric',
+          timeZone: 'UTC'
+        });
+        const endDate = new Date(invoice.endDate).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          timeZone: 'UTC'
+        });
+        const statusClass = invoice.status === 'paid' ? 'style="background: rgba(34, 197, 94, 0.1); color: var(--success);"' : '';
+
+        return `
+          <tr>
+            <td><strong>${invoice.invoiceNumber}</strong></td>
+            <td>${invoice.clientName}</td>
+            <td>${invoice.jobName}</td>
+            <td>${startDate} - ${endDate}</td>
+            <td><span class="badge">$${invoice.totalAmount.toLocaleString()}</span></td>
+            <td><span class="badge" ${statusClass}>${invoice.status}</span></td>
+            <td>
+              <div class="actions">
+                <button class="btn btn-icon" onclick="viewInvoice('${invoice._id}')" title="View Invoice">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+                <button class="btn btn-icon" onclick="toggleInvoiceStatus('${invoice._id}', '${invoice.status}')" title="${invoice.status === 'paid' ? 'Mark Unpaid' : 'Mark Paid'}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="${invoice.status === 'paid' ? 'var(--success)' : 'currentColor'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                  </svg>
+                </button>
+                <button class="btn btn-danger" onclick="deleteInvoice('${invoice._id}')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function filterInvoices(status) {
+      invoiceStatusFilter = status;
+
+      // Update active button
+      document.querySelectorAll('.filter-btn[data-invoice-status]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.invoiceStatus === status);
+      });
+
+      renderInvoices();
+    }
+
+    function loadJobsForInvoice() {
+      const clientId = document.getElementById('invoice-client').value;
+      const jobSelect = document.getElementById('invoice-job');
+
+      const clientJobs = jobs.filter(j => j.clientId === clientId);
+      jobSelect.innerHTML = `<option value="">Select a job...</option>` +
+        clientJobs.map(j => `<option value="${j._id}">${j.name}</option>`).join('');
+    }
+
+    async function createInvoice(e) {
+      e.preventDefault();
+      const data = {
+        clientId: document.getElementById('invoice-client').value,
+        jobId: document.getElementById('invoice-job').value,
+        startDate: document.getElementById('invoice-start').value,
+        endDate: document.getElementById('invoice-end').value
+      };
+
+      try {
+        const response = await fetch(`${API}/api/invoices`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          alert(error.error || 'Failed to create invoice');
+          return;
+        }
+
+        closeModal('invoice');
+        fetchData();
+      } catch (error) {
+        console.error('Error creating invoice:', error);
+        alert('Failed to create invoice');
+      }
+    }
+
+    function viewInvoice(id) {
+      window.open(`${API}/api/invoices/${id}/html`, '_blank');
+    }
+
+    async function toggleInvoiceStatus(id, currentStatus) {
+      const newStatus = currentStatus === 'paid' ? 'unpaid' : 'paid';
+
+      await fetch(`${API}/api/invoices/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      fetchData();
+    }
+
+    async function deleteInvoice(id) {
+      if (!confirm('Delete this invoice?')) return;
+      await fetch(`${API}/api/invoices/${id}`, { method: 'DELETE' });
       fetchData();
     }
 

@@ -62,6 +62,12 @@ async function connectDB() {
     await db.collection('timeEntries').createIndex({ clientId: 1, jobId: 1 });
     await db.collection('timeEntries').createIndex({ date: -1 });
 
+    // Invoice indexes
+    await db.collection('invoices').createIndex({ clientId: 1 });
+    await db.collection('invoices').createIndex({ jobId: 1 });
+    await db.collection('invoices').createIndex({ createdAt: -1 });
+    await db.collection('invoices').createIndex({ invoiceNumber: 1 }, { unique: true });
+
     return db;
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
@@ -381,6 +387,432 @@ app.get('/api/stats', async (req, res) => {
       entryCount: entries.length,
       byClient
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== ADMIN ROUTES ==============
+
+// Update all client rates to a specific value (one-time migration)
+app.post('/api/admin/update-rates', async (req, res) => {
+  try {
+    const { rate } = req.body;
+    if (!rate || typeof rate !== 'number') {
+      return res.status(400).json({ error: 'Rate must be a number' });
+    }
+
+    const result = await db.collection('clients').updateMany(
+      {},
+      { $set: { rate: rate } }
+    );
+
+    res.json({
+      message: `Updated ${result.modifiedCount} clients to $${rate}/hour`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== INVOICE ROUTES ==============
+
+// Generate next invoice number
+async function generateInvoiceNumber() {
+  const year = new Date().getFullYear();
+  const lastInvoice = await db.collection('invoices')
+    .find({ invoiceNumber: { $regex: `^INV-${year}-` } })
+    .sort({ invoiceNumber: -1 })
+    .limit(1)
+    .toArray();
+
+  let nextNumber = 1;
+  if (lastInvoice.length > 0) {
+    const lastNumber = parseInt(lastInvoice[0].invoiceNumber.split('-')[2], 10);
+    nextNumber = lastNumber + 1;
+  }
+
+  return `INV-${year}-${String(nextNumber).padStart(4, '0')}`;
+}
+
+// Get all invoices
+app.get('/api/invoices', async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.clientId) filter.clientId = req.query.clientId;
+    if (req.query.jobId) filter.jobId = req.query.jobId;
+
+    const invoices = await db.collection('invoices')
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(invoices);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single invoice
+app.get('/api/invoices/:id', async (req, res) => {
+  try {
+    const invoice = await db.collection('invoices').findOne({ _id: new ObjectId(req.params.id) });
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    res.json(invoice);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create invoice for a specific job
+app.post('/api/invoices', async (req, res) => {
+  try {
+    const { clientId, jobId, startDate, endDate } = req.body;
+    if (!clientId || !jobId || !startDate || !endDate) {
+      return res.status(400).json({ error: 'clientId, jobId, startDate, and endDate are required' });
+    }
+
+    // Get client info
+    const client = await db.collection('clients').findOne({ _id: new ObjectId(clientId) });
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    // Get job info
+    const job = await db.collection('jobs').findOne({ _id: new ObjectId(jobId) });
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Get time entries for this job within the date range
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const entries = await db.collection('timeEntries')
+      .find({
+        jobId: jobId,
+        date: { $gte: start, $lte: end }
+      })
+      .sort({ date: 1 })
+      .toArray();
+
+    if (entries.length === 0) {
+      return res.status(400).json({ error: 'No time entries found for this job in the specified date range' });
+    }
+
+    // Build line items from time entries
+    const lineItems = entries.map(entry => ({
+      date: entry.date,
+      description: entry.description || 'Work performed',
+      hours: entry.hours,
+      amount: Math.round(entry.hours * client.rate * 100) / 100
+    }));
+
+    const totalHours = Math.round(lineItems.reduce((sum, item) => sum + item.hours, 0) * 100) / 100;
+    const totalAmount = Math.round(lineItems.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
+
+    const invoiceNumber = await generateInvoiceNumber();
+
+    const invoice = {
+      invoiceNumber,
+      clientId,
+      clientName: client.name,
+      clientRate: client.rate,
+      jobId,
+      jobName: job.name,
+      startDate: start,
+      endDate: end,
+      status: 'unpaid',
+      lineItems,
+      totalHours,
+      totalAmount,
+      createdAt: new Date(),
+      paidAt: null
+    };
+
+    const result = await db.collection('invoices').insertOne(invoice);
+    const newInvoice = await db.collection('invoices').findOne({ _id: result.insertedId });
+    res.status(201).json(newInvoice);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update invoice status
+app.put('/api/invoices/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['paid', 'unpaid'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be "paid" or "unpaid"' });
+    }
+
+    const update = {
+      status,
+      updatedAt: new Date()
+    };
+    if (status === 'paid') {
+      update.paidAt = new Date();
+    } else {
+      update.paidAt = null;
+    }
+
+    const result = await db.collection('invoices').findOneAndUpdate(
+      { _id: new ObjectId(req.params.id) },
+      { $set: update },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete invoice
+app.delete('/api/invoices/:id', async (req, res) => {
+  try {
+    const result = await db.collection('invoices').deleteOne({ _id: new ObjectId(req.params.id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    res.json({ message: 'Invoice deleted' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generate printable HTML invoice
+app.get('/api/invoices/:id/html', async (req, res) => {
+  try {
+    const invoice = await db.collection('invoices').findOne({ _id: new ObjectId(req.params.id) });
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const formatDate = (date) => {
+      return new Date(date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'UTC'
+      });
+    };
+
+    const formatCurrency = (amount) => {
+      return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const lineItemsHtml = invoice.lineItems.map(item => `
+      <tr>
+        <td>${formatDate(item.date)}</td>
+        <td>${item.description}</td>
+        <td class="right">${item.hours}h</td>
+        <td class="right">${formatCurrency(item.amount)}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice ${invoice.invoiceNumber}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a1a;
+      line-height: 1.6;
+      padding: 40px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #f97316;
+    }
+    .logo {
+      font-size: 32px;
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+    .logo span { color: #f97316; }
+    .invoice-info {
+      text-align: right;
+    }
+    .invoice-number {
+      font-size: 24px;
+      font-weight: 600;
+      color: #f97316;
+    }
+    .invoice-date {
+      color: #666;
+      margin-top: 4px;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-top: 8px;
+    }
+    .status.paid { background: #dcfce7; color: #16a34a; }
+    .status.unpaid { background: #fef3c7; color: #d97706; }
+    .details {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+    .detail-section h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    .detail-section p {
+      font-size: 16px;
+      font-weight: 500;
+    }
+    .detail-section .sub {
+      font-size: 14px;
+      color: #666;
+      font-weight: 400;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+    }
+    th {
+      text-align: left;
+      padding: 12px 16px;
+      background: #f5f5f5;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      border-bottom: 2px solid #e5e5e5;
+    }
+    th.right, td.right { text-align: right; }
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+    .totals {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .totals-table {
+      width: 280px;
+    }
+    .totals-table tr td {
+      padding: 8px 16px;
+    }
+    .totals-table .label {
+      color: #666;
+    }
+    .totals-table .total-row td {
+      font-size: 18px;
+      font-weight: 600;
+      border-top: 2px solid #1a1a1a;
+      padding-top: 12px;
+    }
+    .totals-table .total-row .amount {
+      color: #f97316;
+    }
+    .footer {
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid #e5e5e5;
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+    }
+    @media print {
+      body { padding: 20px; }
+      .status { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">Temp<span>o</span></div>
+    <div class="invoice-info">
+      <div class="invoice-number">${invoice.invoiceNumber}</div>
+      <div class="invoice-date">Issued: ${formatDate(invoice.createdAt)}</div>
+      <span class="status ${invoice.status}">${invoice.status}</span>
+    </div>
+  </div>
+
+  <div class="details">
+    <div class="detail-section">
+      <h3>Bill To</h3>
+      <p>${invoice.clientName}</p>
+    </div>
+    <div class="detail-section">
+      <h3>Job / Purchase Order</h3>
+      <p>${invoice.jobName}</p>
+      <p class="sub">Period: ${formatDate(invoice.startDate)} - ${formatDate(invoice.endDate)}</p>
+      <p class="sub">Rate: ${formatCurrency(invoice.clientRate)}/hour</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Description</th>
+        <th class="right">Hours</th>
+        <th class="right">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${lineItemsHtml}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <table class="totals-table">
+      <tr>
+        <td class="label">Total Hours</td>
+        <td class="right">${invoice.totalHours}h</td>
+      </tr>
+      <tr>
+        <td class="label">Rate</td>
+        <td class="right">${formatCurrency(invoice.clientRate)}/hr</td>
+      </tr>
+      <tr class="total-row">
+        <td>Total Due</td>
+        <td class="right amount">${formatCurrency(invoice.totalAmount)}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    <p>Thank you for your business!</p>
+  </div>
+</body>
+</html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
